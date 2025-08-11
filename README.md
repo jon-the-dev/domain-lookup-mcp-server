@@ -1,1 +1,1 @@
-# domain-lookup.mcp-server
+# domain-lookup-mcp-server
