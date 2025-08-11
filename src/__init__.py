@@ -1,0 +1,1 @@
+# Domain Lookup MCP Server

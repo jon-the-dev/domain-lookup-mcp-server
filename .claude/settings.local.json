@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python test:*)",
+      "Bash(python3:*)",
+      "Bash(poetry install:*)",
+      "Bash(poetry run:*)",
+      "Bash(touch:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": []
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "domain-lookup": {
+      "command": "poetry",
+      "args": ["run", "python", "src/main.py"],
+      "cwd": "/path/to/domain-lookup-mcp-server",
+      "env": {
+        "PYTHONPATH": "."
+      }
+    }
+  }
+}
