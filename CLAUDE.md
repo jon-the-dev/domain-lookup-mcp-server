@@ -1,182 +1,346 @@
-# MCP Server Best Practices: Comprehensive Design Guide
+# Domain Lookup MCP Server - Development Guide
 
-## Introduction
+## Project Overview
 
-The Model Context Protocol (MCP) has emerged as a critical standard for integrating AI systems with external tools and services. This comprehensive guide synthesizes best practices from official specifications, Microsoft's implementation guidelines, security research, and production deployments to provide actionable guidance for building robust MCP servers.
+This is a Model Context Protocol (MCP) server that provides domain lookup capabilities through WHOIS and DNS query tools. Built with FastMCP and Python 3.10+, it's designed specifically for AI agent workflows with intelligent caching, rate limiting, and comprehensive error handling.
 
-## Core Design Principles
+## Architecture
 
-### Design for the agent, not the human
+### Core Components
 
-The AI agent is your primary user - a fundamental principle that shapes every design decision. **Error messages should guide the agent toward resolution**, not just report failures. Instead of "Authentication failed," provide "Authentication failed: MCP server requires valid API_TOKEN environment variable. Current token is missing or invalid." This actionable guidance enables agents to understand context and potentially recover from errors.
+- **MCP Server**: Built using `fastmcp` framework (v2.13.0+)
+- **WHOIS Integration**: Uses system `whois` command via subprocess
+- **DNS Resolution**: Uses `dnspython` library for DNS queries
+- **Caching Layer**: File-based DNS cache with TTL support at `~/.cache/domain-lookup-mcp/`
+- **Logging**: All logs to stderr (never stdout) to prevent JSON-RPC corruption
 
-### Manage your tool budget intentionally
+### Tool Categories
 
-Agents operate within cognitive and context limitations. **Avoid the anti-pattern of creating one tool per API endpoint**, which leads to overloaded tool sets that discourage adoption. Instead, implement MCP server prompts as "macros" that chain multiple operations behind the scenes. For example, rather than separate tools for "get_user," "get_invoices," and "filter_invoices," create a single "get_user_invoices" tool that handles the complexity internally.
+1. **WHOIS Tools** (5 tools):
+   - `whois_domain` - Single domain lookup with registration analysis
+   - `whois_domains` - Bulk domain lookups with concurrency control
+   - `whois_tld` - Top Level Domain information
+   - `whois_ip` - IP address ownership information
+   - `whois_asn` - Autonomous System Number details
 
-### Implement dual interfaces for comprehensive functionality
+2. **DNS Record Tools** (7 tools):
+   - `dns_lookup_mx` - Mail exchange records
+   - `dns_lookup_spf` - Sender Policy Framework records
+   - `dns_lookup_dkim` - DomainKeys Identified Mail records
+   - `dns_lookup_dmarc` - DMARC policy records
+   - `dns_lookup_txt` - All TXT records
+   - `dns_lookup_records` - Any DNS record type (A, AAAA, NS, etc.)
+   - `dns_clear_cache` - Cache management
 
-Structure servers around MCP's three core primitives: **Tools** enable model-controlled executable functions, **Resources** provide application-controlled context data with URI-based addressing, and **Prompts** offer user-controlled interaction templates. This separation of concerns ensures clear boundaries between different types of functionality.
+3. **Helper Tools** (1 tool):
+   - `setup_domain_lookup_mcp_server` - Usage guide and examples
 
-## Security Best Practices and Considerations
+## Development Guidelines
 
-### Input validation and threat prevention
+### Code Style
 
-Local MCP servers executing system commands face significant injection risks. **Validate and sanitize all user inputs before system command execution**, using parameterized execution instead of string concatenation. Implement strict allowlists for acceptable input patterns and properly escape shell metacharacters. For database operations, only allow SELECT queries by default and implement query validation before execution.
+- **Formatting**: Black with 100 character line length
+- **Type Hints**: Required on all function signatures (mypy strict mode)
+- **Async/Await**: All tool functions are async
+- **Error Handling**: Always provide actionable error messages for AI agents
+- **Logging**: Use `logger` instance, never print to stdout
 
-Prompt injection represents a high-risk vulnerability unique to AI systems. **Treat untrusted MCP content like untrusted user input**, scanning for prompt injection patterns and suspicious tokens. Never include untrusted server content in the same prompt as sensitive information. Consider implementing AI prompt shields like Azure AI Foundry for additional protection layers.
+### Key Patterns
 
-## Implementation Best Practices
+#### 1. Stateless Tool Design
+Each tool call is self-contained. No server-level state beyond the cache.
 
-### Tool naming and parameter design
+```python
+@mcp.tool()
+async def whois_domain(domain: str) -> Dict[str, Any]:
+    # Clean input
+    domain = clean_domain(domain)
+    # Execute query
+    result = await run_whois_command(domain)
+    # Return structured response
+    return result
+```
 
-Use descriptive, action-oriented names like "search_documents" or "analyze_code_quality" rather than generic terms. **Design parameters with clear defaults** - required parameters first, optional parameters with sensible defaults, and complex objects only when necessary. This approach reduces cognitive load on AI agents while maintaining flexibility.
+#### 2. Intelligent Caching
+DNS queries use file-based cache with TTL from DNS records:
 
-```typescript
-interface ToolParameters {
-  // Required parameters
-  query: string;
-  
-  // Optional with defaults
-  limit?: number; // default: 10
-  format?: 'json' | 'xml' | 'csv'; // default: 'json'
-  
-  // Complex when necessary
-  filters?: {
-    dateRange?: { start: string; end: string };
-    categories?: string[];
-  };
+```python
+# Check cache first
+if use_cache:
+    cached = dns_cache.get(domain, record_type)
+    if cached:
+        return cached
+
+# Query and cache result
+result = await query_dns_records(domain, "A")
+dns_cache.set(domain, "A", result, ttl=timedelta(seconds=min_ttl))
+```
+
+#### 3. Input Sanitization
+Always clean domain inputs to handle various formats:
+
+```python
+def clean_domain(domain: str) -> str:
+    domain = domain.strip().lower()
+    domain = domain.replace('http://', '').replace('https://', '')
+    domain = domain.split('/')[0]  # Remove path
+    domain = domain.split(':')[0]  # Remove port
+    return domain
+```
+
+#### 4. Actionable Error Messages
+Design errors to guide AI agents toward resolution:
+
+```python
+return {
+    "error": f"No DKIM record found for selector '{selector}' at {domain}. Common selectors: default, google, s1, s2, k1",
+    "domain": domain,
+    "selector": selector
 }
 ```
 
-### Stateless tool design
+#### 5. Structured Responses
+All responses follow consistent structure:
 
-Make each tool call self-contained to improve reliability and scalability. **Create connections per tool call rather than at server startup**, enabling better resource management and failure isolation. This pattern particularly benefits database operations and external API calls where connection state can become problematic.
+```python
+{
+    "domain": "example.com",
+    "record_type": "MX",
+    "records": [...],
+    "record_count": 2,
+    "ttl": 3600,
+    "timestamp": "2024-01-20T10:30:00Z",
+    "cached": false,
+    "error": "optional error message"
+}
+```
 
-### SDK selection and technology choices
+### Concurrency and Rate Limiting
 
-Choose appropriate SDKs based on ecosystem requirements. Python with `modelcontextprotocol` suits data science and ML workloads. TypeScript with `@modelcontextprotocol/sdk` excels for web and API integrations. Java with Spring Boot serves enterprise environments well, while C# with Microsoft's official SDK integrates seamlessly with .NET ecosystems.
+#### WHOIS Queries
+- **Rate Limiting**: 0.1s delay between requests
+- **Concurrency**: Limited to 5 simultaneous requests via Semaphore
+- **Timeout**: 10 second timeout per query
+
+```python
+semaphore = asyncio.Semaphore(5)
+async with semaphore:
+    result = await whois_domain(domain)
+    await asyncio.sleep(0.1)  # Rate limiting
+```
+
+#### DNS Queries
+- **Timeout**: 5 second timeout per query
+- **Nameservers**: Always use public DNS (8.8.8.8, 8.8.4.4, 1.1.1.1)
+- **Caching**: Automatic with DNS TTL or 24-hour default
+
+## Testing and Validation
+
+### Running Tests
+```bash
+poetry run python test_server.py
+```
+
+### Testing Individual Tools
+The test suite validates:
+- WHOIS domain lookups (registered and unregistered)
+- WHOIS bulk operations
+- DNS record queries (MX, TXT, A, etc.)
+- Email authentication records (SPF, DKIM, DMARC)
+- Cache functionality
+- Error handling
+
+### Manual Testing
+```bash
+# Start server locally
+poetry run python src/main.py
+
+# Test with MCP client or inspector
+poetry install
+poetry run python test_server.py
+```
+
+## Common Development Tasks
+
+### Adding a New DNS Record Type Tool
+
+1. Create tool function with `@mcp.tool()` decorator
+2. Use `query_dns_records()` helper with appropriate record type
+3. Add special field parsing if needed (like MX preference)
+4. Document in tool docstring for AI agent understanding
+5. Add to `setup_domain_lookup_mcp_server()` examples
+
+Example:
+```python
+@mcp.tool()
+async def dns_lookup_caa(domain: str, use_cache: bool = True) -> Dict[str, Any]:
+    """
+    Look up CAA (Certification Authority Authorization) records.
+
+    CAA records specify which certificate authorities can issue certificates.
+
+    Args:
+        domain: Domain to query
+        use_cache: Use cached results if available
+
+    Returns:
+        CAA records for the domain
+    """
+    logger.info(f"Looking up CAA records for: {domain}")
+    return await query_dns_records(domain, "CAA", use_cache)
+```
+
+### Adding a New WHOIS Tool
+
+1. Create async tool function
+2. Use `run_whois_command()` helper
+3. Add custom parsing if needed
+4. Include analysis fields for AI agents
+5. Add appropriate error handling
+
+### Modifying Cache Behavior
+
+Cache configuration is in `DNSCache` class:
+- Default TTL: `DEFAULT_CACHE_TTL = timedelta(hours=24)`
+- Cache directory: `CACHE_DIR = Path.home() / ".cache" / "domain-lookup-mcp"`
+- Cache keys: SHA256 hash of `domain:record_type:extra`
+
+### Improving Error Messages
+
+Error messages should:
+1. State what went wrong clearly
+2. Provide context (domain, record type, etc.)
+3. Suggest solutions or common selectors/options
+4. Include timestamp for debugging
+
+## Security Considerations
+
+### Input Validation
+- All domain inputs sanitized via `clean_domain()`
+- No shell command injection risk (subprocess with args list)
+- TLD inputs normalized and validated
+- IP/ASN inputs passed directly to whois (validated by command)
+
+### DNS Security
+- Always use trusted public DNS servers
+- Timeout protection on all queries
+- No recursive resolution beyond dnspython library
+- Cache prevents DNS amplification attacks
+
+### Logging Security
+- No sensitive data logged
+- All logs to stderr only
+- Log level INFO by default
+- Error messages don't expose internals
 
 ## Performance Optimization
 
-### Token efficiency strategies
+### DNS Caching Strategy
+- File-based cache survives server restarts
+- TTL from DNS records prevents stale data
+- Cache hit reduces query time by ~95%
+- Cache directory automatically created
 
-MCP servers operate within token budget constraints. **Reduce tool definition verbosity by 60-80%** through concise descriptions, eliminating redundant examples and using references to external documentation. Return only essential data fields in responses - consider plain text instead of JSON for simple data, achieving up to 80% token reduction.
+### WHOIS Optimization
+- Bulk operations use controlled concurrency
+- Rate limiting prevents server blocks
+- Timeout prevents hanging on slow servers
+- Minimal parsing for faster responses
 
-## Documentation Requirements
+### Memory Management
+- No in-memory caches (file-based only)
+- Subprocess cleanup automatic
+- No persistent connections
+- Stateless design prevents leaks
 
-### Dual-audience documentation
+## Dependencies
 
-Documentation serves two distinct audiences with different needs. **For human developers**, explain why they should use your MCP server, what problems it solves, and how it integrates into workflows. Provide installation instructions, configuration examples, and troubleshooting guides.
+### Production
+- `python = "^3.10"` - Minimum Python version
+- `fastmcp = "^2.13.0"` - MCP framework
+- `dnspython = "^2.4.0"` - DNS resolution
 
-**For AI agents**, focus on well-written tool names and descriptions that clearly communicate purpose and usage. Provide detailed parameter schemas with examples and clear usage patterns in tool descriptions. This dual approach ensures both adoption and effective usage.
+### Development
+- `pytest = "^7.0.0"` - Test framework
+- `pytest-asyncio = "^0.21.0"` - Async test support
+- `black = "^24.3.0"` - Code formatting
+- `mypy = "^1.0.0"` - Type checking
 
-### Tool documentation standards
+### System Requirements
+- `whois` command-line tool (pre-installed on most Unix systems)
+- Internet connectivity for DNS/WHOIS queries
+- File system access for cache directory
 
-Every tool should include a clear, action-oriented name, a concise description of its purpose, comprehensive parameter documentation with types and constraints, expected return value structures, common error conditions and recovery procedures, and practical usage examples. This documentation becomes part of the tool's interface, directly affecting AI agent performance.
+## MCP Integration
 
-## Resource Management
-
-### Memory and connection management
-
-Implement proper cleanup mechanisms for all resources. **Use connection pooling with appropriate limits** to prevent resource exhaustion while maintaining performance. Implement session cleanup with timeout mechanisms, cleaning up abandoned sessions automatically. Monitor resource usage patterns to identify leaks early.
-
-```javascript
-// Session cleanup mechanism
-setInterval(() => {
-  const now = Date.now();
-  for (const [id, session] of sessions.entries()) {
-    if (now - session.created.getTime() > SESSION_TIMEOUT) {
-      sessions.delete(id);
+### Configuration Example
+```json
+{
+  "mcpServers": {
+    "domain-lookup": {
+      "command": "poetry",
+      "args": ["run", "python", "src/main.py"],
+      "cwd": "/path/to/domain-lookup-mcp-server",
+      "env": {
+        "PYTHONPATH": "."
+      }
     }
   }
-}, CLEANUP_INTERVAL);
+}
 ```
 
-### Concurrent request handling
+### Server Capabilities
+- **Tools Only**: This server provides tools, no resources or prompts
+- **Stateless**: Each request is independent
+- **Stdio Transport**: Standard MCP stdio communication
+- **No Authentication**: Local execution only
 
-Design for concurrency from the start. **Handle multiple requests simultaneously** using async/await patterns in Node.js or asyncio in Python. Implement request queuing with appropriate backpressure mechanisms. Monitor active request counts to prevent overload conditions.
+## Troubleshooting
 
-## Client Compatibility
+### Common Issues
 
-### Protocol version management
+**DNS queries fail with "No nameservers configured"**
+- Server explicitly sets public DNS servers (8.8.8.8, etc.)
+- Uses `configure=False` for restricted environments
 
-Support multiple protocol versions to ensure broad compatibility. **Negotiate protocol versions during initialization**, falling back to mutually supported versions when necessary. Document supported versions clearly and provide migration guides for breaking changes.
+**WHOIS timeout errors**
+- 10 second timeout is intentional for unresponsive servers
+- Some WHOIS servers are slow or rate-limited
+- Retry with delay if needed
 
-### Capability advertisement
+**Cache not clearing**
+- Check file permissions on `~/.cache/domain-lookup-mcp/`
+- Verify cache directory exists and is writable
 
-Advertise server capabilities explicitly during the initialization phase. **Include both required and optional features**, allowing clients to adapt their behavior based on available functionality. Consider experimental features behind capability flags for gradual rollout.
+**Import errors**
+- Run `poetry install` to ensure dependencies installed
+- Check Python version is 3.10+
+- Verify PYTHONPATH if running outside poetry
 
-## Common Pitfalls and How to Avoid Them
+## Best Practices for Contributors
 
-### The monolithic tool trap
+1. **Always async**: New tools must be async functions
+2. **Type everything**: Use comprehensive type hints
+3. **Test thoroughly**: Add tests for new functionality
+4. **Document for agents**: Docstrings should guide AI usage
+5. **Error messages matter**: Make them actionable
+6. **Log to stderr**: Never print or log to stdout
+7. **Cache wisely**: Use cache for DNS, not WHOIS
+8. **Respect rate limits**: Add delays for external services
+9. **Clean inputs**: Always sanitize user-provided data
+10. **Structured responses**: Follow established JSON formats
 
-Creating overly broad tools that try to do everything leads to confusion and poor performance. **Keep tools focused on single responsibilities**, using prompts to compose complex workflows from simple tools. This approach improves both maintainability and AI agent effectiveness.
+## Version History
 
-### Authentication context loss
+- **v2.0.0**: Added DNS caching, email auth tools, improved error handling
+- **v1.0.0**: Initial release with WHOIS and basic DNS tools
 
-The MCP specification doesn't provide a standard way to pass authentication context through the protocol. **Use request objects to carry authentication information** through your server implementation, ensuring security context propagates correctly to all operations.
+## Support and Contributions
 
-### stdout contamination
+This MCP server is designed to be:
+- **Efficient**: Minimal overhead, intelligent caching
+- **Reliable**: Comprehensive error handling, timeouts
+- **Agent-friendly**: Clear responses, actionable errors
+- **Maintainable**: Clean code, strong typing, good tests
 
-Debug output to stdout breaks JSON-RPC communication. **Always direct logs to stderr**, never stdout. This simple rule prevents countless debugging sessions investigating mysterious protocol failures.
-
-### Ignoring rate limits
-
-Failing to implement rate limiting exposes servers to resource exhaustion. **Implement adaptive rate limiting** that adjusts based on system load and client behavior patterns. Use token bucket algorithms for smooth traffic shaping rather than hard cutoffs.
-
-## Configuration Management
-
-### Environment-based configuration
-
-Use environment variables for runtime configuration, configuration files for complex settings, and dedicated secrets management services for sensitive data. **Never store secrets in plaintext**, even in development environments. Implement configuration validation on startup to catch problems early.
-
-### Feature flags and gradual rollout
-
-Implement feature flags to control functionality rollout independently of deployments. **Use percentage-based rollouts** for gradual feature adoption, monitoring metrics during the rollout process. This approach enables quick rollback if issues arise while minimizing blast radius.
-
-## Logging and Monitoring
-
-### Structured logging implementation
-
-Use JSON structured logging for machine parsing, including correlation IDs for request tracing. **Log at appropriate levels** - DEBUG for development details, INFO for normal operations, WARN for recoverable issues, and ERROR for failures requiring attention. Include relevant context in all log entries without exposing sensitive data.
-
-### Key metrics collection
-
-Monitor operational metrics including request latency percentiles (p50, p95, p99), throughput in requests per second, error rates by tool and endpoint, and resource utilization patterns. **Track business metrics** like tool hit rates, success rates, token consumption per operation, and cost per successful operation. These metrics guide both operational decisions and product improvements.
-
-## Deployment Considerations
-
-### Container-first deployment
-
-Package MCP servers as Docker containers for consistency across environments. **Use multi-stage builds** to minimize container size, implement health checks for orchestration platforms, and run containers with non-root users for security. This approach simplifies deployment while improving security and reliability.
-
-### Transport protocol selection
-
-Choose transport protocols based on deployment requirements. **Stdio works best for local development** and Docker deployments, providing simple process-based lifecycle management. HTTP with SSE or the new Streamable HTTP transport enables production scaling with load balancing and authentication support. Consider your scaling requirements when selecting transport methods.
-
-### Progressive deployment strategies
-
-Implement blue-green deployments for zero-downtime updates or canary deployments for gradual rollouts with monitoring. **Start with a small percentage of traffic** to new versions, monitoring error rates and performance metrics before full rollout. Maintain rollback capability throughout the deployment process.
-
-## Advanced Patterns
-
-### Multi-tenant architectures
-
-For enterprise deployments, implement proper tenant isolation using separate database schemas or instances per tenant. **Enforce strict access controls** at multiple levels, implement tenant-specific rate limiting and quotas, and monitor resource usage per tenant for capacity planning and billing.
-
-### Event-driven architectures
-
-Implement event-driven patterns for scalable, loosely coupled systems. **Use event-carried state transfer** to reduce synchronous dependencies between services. Implement proper event ordering and deduplication. Consider event sourcing for audit requirements and debugging capabilities.
-
-### Microservices patterns
-
-When scaling beyond single servers, implement service discovery and registration for dynamic topologies, use circuit breakers for fault tolerance, implement distributed tracing for debugging, and consider service mesh adoption for advanced traffic management. These patterns enable complex deployments while maintaining reliability.
-
-## Conclusion
-
-Building production-ready MCP servers requires careful attention to security, performance, reliability, and usability. **Start with security and monitoring from day one**, not as afterthoughts. Design for AI agents as your primary users, providing clear, actionable interfaces. Implement comprehensive testing strategies covering both technical correctness and AI usability.
-
-The MCP ecosystem continues evolving rapidly, with new patterns and best practices emerging from production deployments. Success requires balancing powerful capabilities with robust operational practices. Organizations that invest in these patterns early will be well-positioned to leverage the full potential of AI-integrated applications.
-
-Remember that MCP servers are critical infrastructure components in AI systems. Treat them with the same rigor applied to production APIs and services. The practices outlined in this guide provide a foundation for building MCP servers that are secure, scalable, and maintainable while delivering value to both AI agents and end users.
+When contributing, prioritize the AI agent experience above all else.
