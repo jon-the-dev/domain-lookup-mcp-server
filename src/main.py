@@ -79,7 +79,7 @@ class DNSCache:
                 return None
 
             logger.debug(f"Cache hit for {domain} {record_type}")
-            return cached_data["data"]
+            return cached_data["data"]  # type: ignore[return-value]
 
         except Exception as e:
             logger.warning(f"Error reading cache for {domain} {record_type}: {str(e)}")
@@ -92,7 +92,7 @@ class DNSCache:
         data: Dict[str, Any],
         ttl: Optional[timedelta] = None,
         extra: str = "",
-    ):
+    ) -> None:
         """Cache DNS record with TTL."""
         if ttl is None:
             ttl = DEFAULT_CACHE_TTL
@@ -115,7 +115,7 @@ class DNSCache:
         except Exception as e:
             logger.warning(f"Error writing cache for {domain} {record_type}: {str(e)}")
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear all cached entries."""
         try:
             for cache_file in self.cache_dir.glob("*.json"):
@@ -169,11 +169,12 @@ async def run_whois_command(query: str, timeout: int = 10) -> Dict[str, Any]:
 
         # Parse basic information from whois output
         lines = raw_output.split("\n")
-        parsed_data = {
+        parsed_fields: Dict[str, Any] = {}
+        parsed_data: Dict[str, Any] = {
             "query": query,
             "raw_output": raw_output,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "parsed_fields": {},
+            "parsed_fields": parsed_fields,
         }
 
         # Extract common fields
@@ -184,17 +185,14 @@ async def run_whois_command(query: str, timeout: int = 10) -> Dict[str, Any]:
                 key = key.strip().lower().replace(" ", "_")
                 value = value.strip()
                 if value and key:
-                    if key in parsed_data["parsed_fields"]:
+                    if key in parsed_fields:
                         # Handle multiple values for same field
-                        if isinstance(parsed_data["parsed_fields"][key], list):
-                            parsed_data["parsed_fields"][key].append(value)
+                        if isinstance(parsed_fields[key], list):
+                            parsed_fields[key].append(value)
                         else:
-                            parsed_data["parsed_fields"][key] = [
-                                parsed_data["parsed_fields"][key],
-                                value,
-                            ]
+                            parsed_fields[key] = [parsed_fields[key], value]
                     else:
-                        parsed_data["parsed_fields"][key] = value
+                        parsed_fields[key] = value
 
         return parsed_data
 
@@ -438,7 +436,7 @@ async def query_dkim_record(domain: str, selector: str, use_cache: bool = True) 
         if "v=DKIM1" in value or "p=" in value:
             dkim_records.append(value)
 
-    result = {
+    result: Dict[str, Any] = {
         "domain": domain,
         "selector": selector,
         "dkim_domain": dkim_domain,
@@ -551,11 +549,11 @@ async def whois_domains(domains: List[str]) -> Dict[str, Any]:
     error_count = 0
 
     for result in results:
-        if isinstance(result, Exception):
+        if isinstance(result, BaseException):
             error_count += 1
             continue
 
-        domain, whois_result = result
+        domain, whois_result = result  # type: ignore[misc]
         domain_results[domain] = whois_result
 
         if whois_result.get("is_registered", False):
