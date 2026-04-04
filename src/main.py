@@ -15,7 +15,7 @@ import socket
 import hashlib
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 from datetime import datetime, timezone, timedelta
 
 import fastmcp
@@ -79,7 +79,7 @@ class DNSCache:
                 return None
 
             logger.debug(f"Cache hit for {domain} {record_type}")
-            return cached_data["data"]  # type: ignore[return-value]
+            return cast(Dict[str, Any], cached_data["data"])
 
         except Exception as e:
             logger.warning(f"Error reading cache for {domain} {record_type}: {str(e)}")
@@ -418,7 +418,7 @@ async def query_dkim_record(domain: str, selector: str, use_cache: bool = True) 
     txt_result = await query_dns_records(dkim_domain, "TXT", use_cache=False)
 
     if "error" in txt_result:
-        result = {
+        result: Dict[str, Any] = {
             "error": f"No DKIM record found for selector '{selector}' at {domain}. Common selectors: default, google, s1, s2, k1",
             "domain": domain,
             "selector": selector,
@@ -436,7 +436,7 @@ async def query_dkim_record(domain: str, selector: str, use_cache: bool = True) 
         if "v=DKIM1" in value or "p=" in value:
             dkim_records.append(value)
 
-    result: Dict[str, Any] = {
+    result = {
         "domain": domain,
         "selector": selector,
         "dkim_domain": dkim_domain,
@@ -553,7 +553,7 @@ async def whois_domains(domains: List[str]) -> Dict[str, Any]:
             error_count += 1
             continue
 
-        domain, whois_result = result  # type: ignore[misc]
+        domain, whois_result = result
         domain_results[domain] = whois_result
 
         if whois_result.get("is_registered", False):
