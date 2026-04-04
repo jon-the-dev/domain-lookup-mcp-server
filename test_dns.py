@@ -2,9 +2,11 @@
 """
 Quick test script for DNS functionality
 """
+
 import asyncio
 import sys
-sys.path.insert(0, 'src')
+
+sys.path.insert(0, "src")
 
 from main import (
     dns_lookup_mx,
@@ -12,13 +14,13 @@ from main import (
     dns_lookup_txt,
     dns_lookup_dmarc,
     dns_lookup_records,
-    dns_clear_cache
+    dns_clear_cache,
 )
 
 
 async def test_dns_functions():
     """Test DNS lookup functions"""
-    print("Testing DNS Lookup Tools\n" + "="*50)
+    print("Testing DNS Lookup Tools\n" + "=" * 50)
 
     test_domain = "google.com"
 
@@ -28,7 +30,7 @@ async def test_dns_functions():
     if "error" not in mx_result:
         print(f"   ✓ Found {mx_result['record_count']} MX records")
         print(f"   TTL: {mx_result.get('ttl')} seconds")
-        for record in mx_result['records'][:2]:
+        for record in mx_result["records"][:2]:
             print(f"   - {record['value']}")
     else:
         print(f"   ✗ Error: {mx_result['error']}")
@@ -38,7 +40,7 @@ async def test_dns_functions():
     spf_result = await dns_lookup_spf(test_domain)
     if "error" not in spf_result:
         print(f"   ✓ Found {spf_result['record_count']} SPF record(s)")
-        if spf_result['spf_records']:
+        if spf_result["spf_records"]:
             print(f"   - {spf_result['spf_records'][0][:80]}...")
     else:
         print(f"   ✗ Error: {spf_result['error']}")
@@ -57,7 +59,7 @@ async def test_dns_functions():
     dmarc_result = await dns_lookup_dmarc(test_domain)
     if "error" not in dmarc_result:
         print(f"   ✓ Found {dmarc_result['record_count']} DMARC record(s)")
-        if dmarc_result.get('dmarc_records'):
+        if dmarc_result.get("dmarc_records"):
             print(f"   - {dmarc_result['dmarc_records'][0][:80]}...")
     else:
         print(f"   ✗ Error: {dmarc_result['error']}")
@@ -67,7 +69,7 @@ async def test_dns_functions():
     a_result = await dns_lookup_records(test_domain, record_type="A")
     if "error" not in a_result:
         print(f"   ✓ Found {a_result['record_count']} A record(s)")
-        for record in a_result['records'][:3]:
+        for record in a_result["records"][:3]:
             print(f"   - {record['value']}")
     else:
         print(f"   ✗ Error: {a_result['error']}")
@@ -77,7 +79,7 @@ async def test_dns_functions():
     mx_result2 = await dns_lookup_mx(test_domain)
     if "error" not in mx_result2:
         print(f"   ✓ Cached: {mx_result2.get('cached', False)}")
-        if mx_result2.get('cached'):
+        if mx_result2.get("cached"):
             print("   Cache is working!")
 
     # Clear cache
@@ -90,10 +92,10 @@ async def test_dns_functions():
     mx_result3 = await dns_lookup_mx(test_domain)
     if "error" not in mx_result3:
         print(f"   ✓ Cached: {mx_result3.get('cached', False)}")
-        if not mx_result3.get('cached'):
+        if not mx_result3.get("cached"):
             print("   Cache clear verified!")
 
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("All DNS tests completed successfully!")
 
 

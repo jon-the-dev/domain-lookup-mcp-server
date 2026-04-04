@@ -13,7 +13,7 @@ packages = [{include = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
-fastmcp = "^2.13.0"
+fastmcp = "^3.2.0"
 dnspython = "^2.4.0"
 
 [tool.poetry.group.dev.dependencies]
@@ -27,11 +27,11 @@ domain-lookup-mcp-server = "src.main:main"
 
 [tool.black]
 line-length = 100
-target-version = ['py38']
+target-version = ['py310']
 include = '\.pyi?$'
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -44,3 +44,6 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
+# Don't type-check third-party packages (fastmcp 3.x uses match statements)
+ignore_missing_imports = true
+follow_imports = "silent"
