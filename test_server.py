@@ -29,7 +29,8 @@ async def test_setup_info():
         result = await setup_domain_lookup_mcp_server()
         print("✅ Setup info retrieved successfully")
         print(f"Server: {result['server_info']['name']}")
-        print(f"Tools available: {len(result['available_tools'])}")
+        all_tools = result.get("whois_tools", []) + result.get("dns_tools", [])
+        print(f"Tools available: {len(all_tools)}")
         return True
     except Exception as e:
         print(f"❌ Setup info failed: {str(e)}")
